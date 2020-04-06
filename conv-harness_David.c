@@ -38,7 +38,6 @@
 #include <omp.h>
 #include <math.h>
 #include <stdint.h>
-#include <x86intrin.h>
 
 /* the following two definitions of DEBUGGING control whether or not
    debugging information is written out. To put the program into
@@ -409,21 +408,13 @@ void multichannel_conv_sparse(float ***image, struct sparse_matrix ***kernels,
   float value;
 
   // initialize the output matrix to zero
-  // consider openMP???
-  float init = 0.0;
-  __m128 initValue = _mm_set1_ps(init);
-// #pragma omp parallel for collapse(3)
   for (m = 0; m < nkernels; m++)
   {
-    for (h = 0; h < height; h += 4)
+    for (h = 0; h < height; h++)
     {
-      for (w = 0; w < width; w += 4)
+      for (w = 0; w < width; w++)
       {
-        // output[i][j][k] = 0.0;
-        _mm_storeu_ps(&output[m][h][w], initValue);
-        _mm_storeu_ps(&output[m][h+1][w], initValue);
-        _mm_storeu_ps(&output[m][h+2][w], initValue);
-        _mm_storeu_ps(&output[m][h+3][w], initValue);
+        output[m][h][w] = 0.0;
       }
     }
   }
@@ -431,108 +422,11 @@ void multichannel_conv_sparse(float ***image, struct sparse_matrix ***kernels,
   DEBUGGING(fprintf(stderr, "w=%d, h=%d, c=%d\n", w, h, c));
 
   // now compute multichannel, multikernel convolution
-// #pragma omp parallel for private(w, h, m, x, y) shared(kernels, image, output) collapse(2)
-  for (w = 0; w < width - width % 4; w += 4)
-  {
-    for (h = 0; h < height - height % 4; h += 4)
-    {
-      // Changed the data structure
-      for (m = 0; m < nkernels; m++)
-      {
-        __m128 sum1 = _mm_setzero_ps();
-        __m128 sum2 = _mm_setzero_ps();
-        __m128 sum3 = _mm_setzero_ps();
-        __m128 sum4 = _mm_setzero_ps();
-        // double sum = 0.0;
-        for (x = 0; x < kernel_order; x++)
-        {
-          for (y = 0; y < kernel_order; y++)
-          {
-            struct sparse_matrix *kernel = kernels[x][y];
-            for (index = kernel->kernel_starts[m]; index < kernel->kernel_starts[m + 1]; index++)
-            {
-              int this_c = kernel->channel_numbers[index];
-              assert((this_c >= 0) && (this_c < nchannels));
-
-              //value = kernel->values[index];
-              __m128 value = _mm_set1_ps(kernel->values[index]);
-
-              //output[m][h][w] += image[w + x][h + y][this_c] * value;
-              __m128 value1 = _mm_setr_ps(image[w + x][h + y][this_c], image[w + x][h + y + 1][this_c], image[w + x][h + y + 2][this_c], image[w + x][h + y + 3][this_c]);
-              value1 = _mm_mul_ps(value1, value);
-
-              __m128 value2 = _mm_setr_ps(image[w + x + 1][h + y][this_c], image[w + x + 1][h + y + 1][this_c], image[w + x + 1][h + y + 2][this_c], image[w + x + 1][h + y + 3][this_c]);
-              value2 = _mm_mul_ps(value2, value);
-
-              __m128 value3 = _mm_setr_ps(image[w + x + 2][h + y][this_c], image[w + x + 2][h + y + 1][this_c], image[w + x + 2][h + y + 2][this_c], image[w + x + 2][h + y + 3][this_c]);
-              value3 = _mm_mul_ps(value3, value);
-
-              __m128 value4 = _mm_setr_ps(image[w + x + 3][h + y][this_c], image[w + x + 3][h + y + 1][this_c], image[w + x + 3][h + y + 2][this_c], image[w + x + 3][h + y + 3][this_c]);
-              value4 = _mm_mul_ps(value4, value);
-
-              sum1 = _mm_add_ps(sum1, value1);
-              sum2 = _mm_add_ps(sum2, value2);
-              sum3 = _mm_add_ps(sum3, value3);
-              sum4 = _mm_add_ps(sum4, value4);
-            }
-          } // y
-        }   // x
-        float sum[4];
-        _mm_storeu_ps(sum, sum1);
-        for (int i = 0; i < 4; i++)
-        {
-          output[m][h + i][w] = sum[i];
-        }
-        _mm_storeu_ps(sum, sum2);
-        for (int i = 0; i < 4; i++)
-        {
-          output[m][h + i][w + 1] = sum[i];
-        }
-        _mm_storeu_ps(sum, sum3);
-        for (int i = 0; i < 4; i++)
-        {
-          output[m][h + i][w + 2] = sum[i];
-        }
-        _mm_storeu_ps(sum, sum4);
-        for (int i = 0; i < 4; i++)
-        {
-          output[m][h + i][w + 3] = sum[i];
-        }
-
-      } // m
-    }   // h
-  }     // w
-
-  //#pragma omp parallel for if (nkernels > 500) schedule(auto)
-  for (w = width - width % 4; w < width; w++)
+  for (w = 0; w < width; w++)
   {
     for (h = 0; h < height; h++)
     {
-      for (x = 0; x < kernel_order; x++)
-      {
-        for (y = 0; y < kernel_order; y++)
-        {
-          struct sparse_matrix *kernel = kernels[x][y];
-          for (m = 0; m < nkernels; m++)
-          {
-            for (index = kernel->kernel_starts[m]; index < kernel->kernel_starts[m + 1]; index++)
-            {
-              int this_c = kernel->channel_numbers[index];
-              assert((this_c >= 0) && (this_c < nchannels));
-              value = kernel->values[index];
-              output[m][h][w] += image[w + x][h + y][this_c] * value;
-            }
-          } // m
-        }   // y
-      }     // x
-    }       // h
-  }         // w
-
-  //#pragma omp parallel for if (nkernels > 500) schedule(auto)
-  for (w = 0; w < width - width % 4; w++)
-  {
-    for (h = height - height % 4; h < height; h++)
-    {
+      double sum = 0.0;
       for (x = 0; x < kernel_order; x++)
       {
         for (y = 0; y < kernel_order; y++)

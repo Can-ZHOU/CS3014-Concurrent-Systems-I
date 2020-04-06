@@ -412,7 +412,7 @@ void multichannel_conv_sparse(float ***image, struct sparse_matrix ***kernels,
   // consider openMP???
   float init = 0.0;
   __m128 initValue = _mm_set1_ps(init);
-// #pragma omp parallel for collapse(3)
+#pragma omp parallel for
   for (m = 0; m < nkernels; m++)
   {
     for (h = 0; h < height; h += 4)
@@ -431,7 +431,7 @@ void multichannel_conv_sparse(float ***image, struct sparse_matrix ***kernels,
   DEBUGGING(fprintf(stderr, "w=%d, h=%d, c=%d\n", w, h, c));
 
   // now compute multichannel, multikernel convolution
-// #pragma omp parallel for private(w, h, m, x, y) shared(kernels, image, output) collapse(2)
+#pragma omp parallel for private(w, h, m, x, y) shared(kernels, image, output) collapse(2)
   for (w = 0; w < width - width % 4; w += 4)
   {
     for (h = 0; h < height - height % 4; h += 4)
@@ -503,7 +503,6 @@ void multichannel_conv_sparse(float ***image, struct sparse_matrix ***kernels,
     }   // h
   }     // w
 
-  //#pragma omp parallel for if (nkernels > 500) schedule(auto)
   for (w = width - width % 4; w < width; w++)
   {
     for (h = 0; h < height; h++)
@@ -528,7 +527,7 @@ void multichannel_conv_sparse(float ***image, struct sparse_matrix ***kernels,
     }       // h
   }         // w
 
-  //#pragma omp parallel for if (nkernels > 500) schedule(auto)
+
   for (w = 0; w < width - width % 4; w++)
   {
     for (h = height - height % 4; h < height; h++)
