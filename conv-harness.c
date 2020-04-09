@@ -38,6 +38,7 @@
 #include <omp.h>
 #include <math.h>
 #include <stdint.h>
+#include <x86intrin.h>
 
 /* the following two definitions of DEBUGGING control whether or not
    debugging information is written out. To put the program into
@@ -453,8 +454,161 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
                       float ***output, int width, int height,
                       int nchannels, int nkernels, int kernel_order)
 {
-  multichannel_conv_sparse(image, kernels, output, width, height,
-                           nchannels, nkernels, kernel_order);
+  int h, w, x, y, c, m, index;
+  float value;
+
+  // if()
+
+  // initialize the output matrix to zero
+  // consider openMP???
+  float init = 0.0;
+  __m128 initValue = _mm_set1_ps(init);
+  // Using 
+  // #pragma omp parallel for 
+  for (m = 0; m < nkernels; m++)
+  {
+    for (h = 0; h < height; h += 4)
+    {
+      for (w = 0; w < width; w += 4)
+      {
+        // output[i][j][k] = 0.0;
+        _mm_storeu_ps(&output[m][h][w], initValue);
+        _mm_storeu_ps(&output[m][h + 1][w], initValue);
+        _mm_storeu_ps(&output[m][h + 2][w], initValue);
+        _mm_storeu_ps(&output[m][h + 3][w], initValue);
+      }
+    }
+  }
+
+  // now compute multichannel, multikernel convolution
+
+  // First handle the part that both the length and width exactly divisible by 4.
+  // Using OpenMP to speedup.
+  #pragma omp parallel for private(w, h, m, x, y) shared(kernels, image, output)
+  // Changed m to the outest loop
+  for (m = 0; m < nkernels; m++)
+  {
+    // Using loop unrolling to speedup.
+    for (w = 0; w < width - width % 4; w += 4)
+    {
+      // Using SSE to speedup.
+      for (h = 0; h < height - height % 4; h += 4)
+      {
+        __m128 sum1 = _mm_setzero_ps();
+        __m128 sum2 = _mm_setzero_ps();
+        __m128 sum3 = _mm_setzero_ps();
+        __m128 sum4 = _mm_setzero_ps();
+        // double sum = 0.0;
+        for (x = 0; x < kernel_order; x++)
+        {
+          for (y = 0; y < kernel_order; y++)
+          {
+            struct sparse_matrix *kernel = kernels[x][y];
+            for (index = kernel->kernel_starts[m]; index < kernel->kernel_starts[m + 1]; index++)
+            {
+              int this_c = kernel->channel_numbers[index];
+              assert((this_c >= 0) && (this_c < nchannels));
+
+              //value = kernel->values[index];
+              __m128 value = _mm_set1_ps(kernel->values[index]);
+
+              //output[m][h][w] += image[w + x][h + y][this_c] * value;
+              __m128 value1 = _mm_setr_ps(image[w + x][h + y][this_c], image[w + x][h + y + 1][this_c], image[w + x][h + y + 2][this_c], image[w + x][h + y + 3][this_c]);
+              value1 = _mm_mul_ps(value1, value);
+
+              __m128 value2 = _mm_setr_ps(image[w + x + 1][h + y][this_c], image[w + x + 1][h + y + 1][this_c], image[w + x + 1][h + y + 2][this_c], image[w + x + 1][h + y + 3][this_c]);
+              value2 = _mm_mul_ps(value2, value);
+
+              __m128 value3 = _mm_setr_ps(image[w + x + 2][h + y][this_c], image[w + x + 2][h + y + 1][this_c], image[w + x + 2][h + y + 2][this_c], image[w + x + 2][h + y + 3][this_c]);
+              value3 = _mm_mul_ps(value3, value);
+
+              __m128 value4 = _mm_setr_ps(image[w + x + 3][h + y][this_c], image[w + x + 3][h + y + 1][this_c], image[w + x + 3][h + y + 2][this_c], image[w + x + 3][h + y + 3][this_c]);
+              value4 = _mm_mul_ps(value4, value);
+
+              sum1 = _mm_add_ps(sum1, value1);
+              sum2 = _mm_add_ps(sum2, value2);
+              sum3 = _mm_add_ps(sum3, value3);
+              sum4 = _mm_add_ps(sum4, value4);
+            }
+          } // y
+        }   // x
+        float sum[4];
+        _mm_storeu_ps(sum, sum1);
+        output[m][h][w] = sum[0];
+        output[m][h + 1][w] = sum[1];
+        output[m][h + 2][w] = sum[2];
+        output[m][h + 3][w] = sum[3];
+
+        _mm_storeu_ps(sum, sum2);
+        output[m][h][w+1] = sum[0];
+        output[m][h + 1][w+1] = sum[1];
+        output[m][h + 2][w+1] = sum[2];
+        output[m][h + 3][w+1] = sum[3];
+
+        _mm_storeu_ps(sum, sum3);
+        output[m][h][w+2] = sum[0];
+        output[m][h + 1][w+2] = sum[1];
+        output[m][h + 2][w+2] = sum[2];
+        output[m][h + 3][w+2] = sum[3];
+
+        _mm_storeu_ps(sum, sum4);
+        output[m][h][w+3] = sum[0];
+        output[m][h + 1][w+3] = sum[1];
+        output[m][h + 2][w+3] = sum[2];
+        output[m][h + 3][w+3] = sum[3];
+      } // h
+    }   // w
+  }     // m
+
+  // Then handle the part that leaves in right. 
+  for (w = width - width % 4; w < width; w++)
+  {
+    for (h = 0; h < height; h++)
+    {
+      for (x = 0; x < kernel_order; x++)
+      {
+        for (y = 0; y < kernel_order; y++)
+        {
+          struct sparse_matrix *kernel = kernels[x][y];
+          for (m = 0; m < nkernels; m++)
+          {
+            for (index = kernel->kernel_starts[m]; index < kernel->kernel_starts[m + 1]; index++)
+            {
+              int this_c = kernel->channel_numbers[index];
+              assert((this_c >= 0) && (this_c < nchannels));
+              value = kernel->values[index];
+              output[m][h][w] += image[w + x][h + y][this_c] * value;
+            }
+          } // m
+        }   // y
+      }     // x
+    }       // h
+  }         // w
+
+  // Then handle the part that leaves in bottom.
+  for (w = 0; w < width - width % 4; w++)
+  {
+    for (h = height - height % 4; h < height; h++)
+    {
+      for (x = 0; x < kernel_order; x++)
+      {
+        for (y = 0; y < kernel_order; y++)
+        {
+          struct sparse_matrix *kernel = kernels[x][y];
+          for (m = 0; m < nkernels; m++)
+          {
+            for (index = kernel->kernel_starts[m]; index < kernel->kernel_starts[m + 1]; index++)
+            {
+              int this_c = kernel->channel_numbers[index];
+              assert((this_c >= 0) && (this_c < nchannels));
+              value = kernel->values[index];
+              output[m][h][w] += image[w + x][h + y][this_c] * value;
+            }
+          } // m
+        }   // y
+      }     // x
+    }       // h
+  }         // w
 }
 
 int main(int argc, char **argv)
