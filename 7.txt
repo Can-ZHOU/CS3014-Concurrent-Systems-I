@@ -1,0 +1,7 @@
+Running on: yunis-Predator-PH315-51. Values are in microseconds.
+Test running using parameters "512 512 3 1028 1028 1000" for 10 iterations:
+David's Code
+104366930
+101205809
+102089133
+101164262

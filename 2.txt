@@ -1,0 +1,35 @@
+Running on: yunis-Predator-PH315-51. Values are in microseconds.
+Test running using parameters "32 32 3 32 64 200" for 10 iterations:
+David's Code
+811
+865
+969
+876
+843
+1015
+894
+889
+774
+877
+My Code with SSE
+269
+262
+272
+264
+264
+272
+275
+269
+332
+254
+My Code with SSE and OpenMP
+293
+292
+292
+298
+279
+282
+285
+284
+287
+271
