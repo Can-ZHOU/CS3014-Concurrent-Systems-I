@@ -456,20 +456,26 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
 {
   int h, w, x, y, c, m, index;
   float value;
+  int OpenMP_flag = 0;
 
-  // if()
+  long long check = width * nchannels * nkernels * kernel_order;
+  long long threshold = 270 * 32 * 64 * 3;
+
+  if (check >= threshold)
+  {
+    OpenMP_flag = 1;
+  }
 
   // initialize the output matrix to zero
   // consider openMP???
   float init = 0.0;
   __m128 initValue = _mm_set1_ps(init);
-  // Using 
-  // #pragma omp parallel for 
+  // Using
   for (m = 0; m < nkernels; m++)
   {
-    for (h = 0; h < height; h += 4)
+    for (h = 0; h < height - height % 4; h += 4)
     {
-      for (w = 0; w < width; w += 4)
+      for (w = 0; w < width - width % 4; w += 4)
       {
         // output[i][j][k] = 0.0;
         _mm_storeu_ps(&output[m][h][w], initValue);
@@ -480,11 +486,33 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
     }
   }
 
-  // now compute multichannel, multikernel convolution
+  for (h = height - height % 4; h < height; h++)
+  {
+    for (w = 0; w < width; w++)
+    {
+      for (m = 0; m < nkernels; m++)
+      {
+        output[m][h][w] = 0.0;
+      }
+    }
+  }
 
-  // First handle the part that both the length and width exactly divisible by 4.
-  // Using OpenMP to speedup.
-  #pragma omp parallel for private(w, h, m, x, y) shared(kernels, image, output)
+  for (h = height - height % 4; h < height; h++)
+  {
+    for (w = width - width % 4; w < width; w++)
+    {
+      for (m = 0; m < nkernels; m++)
+      {
+        output[m][h][w] = 0.0;
+      }
+    }
+  }
+
+// now compute multichannel, multikernel convolution
+
+// First handle the part that both the length and width exactly divisible by 4.
+// Using OpenMP to speedup.
+#pragma omp parallel for if(OpenMP_flag) private(w, h, m, x, y) shared(kernels, image, output)
   // Changed m to the outest loop
   for (m = 0; m < nkernels; m++)
   {
@@ -540,27 +568,27 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
         output[m][h + 3][w] = sum[3];
 
         _mm_storeu_ps(sum, sum2);
-        output[m][h][w+1] = sum[0];
-        output[m][h + 1][w+1] = sum[1];
-        output[m][h + 2][w+1] = sum[2];
-        output[m][h + 3][w+1] = sum[3];
+        output[m][h][w + 1] = sum[0];
+        output[m][h + 1][w + 1] = sum[1];
+        output[m][h + 2][w + 1] = sum[2];
+        output[m][h + 3][w + 1] = sum[3];
 
         _mm_storeu_ps(sum, sum3);
-        output[m][h][w+2] = sum[0];
-        output[m][h + 1][w+2] = sum[1];
-        output[m][h + 2][w+2] = sum[2];
-        output[m][h + 3][w+2] = sum[3];
+        output[m][h][w + 2] = sum[0];
+        output[m][h + 1][w + 2] = sum[1];
+        output[m][h + 2][w + 2] = sum[2];
+        output[m][h + 3][w + 2] = sum[3];
 
         _mm_storeu_ps(sum, sum4);
-        output[m][h][w+3] = sum[0];
-        output[m][h + 1][w+3] = sum[1];
-        output[m][h + 2][w+3] = sum[2];
-        output[m][h + 3][w+3] = sum[3];
+        output[m][h][w + 3] = sum[0];
+        output[m][h + 1][w + 3] = sum[1];
+        output[m][h + 2][w + 3] = sum[2];
+        output[m][h + 3][w + 3] = sum[3];
       } // h
     }   // w
   }     // m
 
-  // Then handle the part that leaves in right. 
+  // Then handle the part that leaves in right.
   for (w = width - width % 4; w < width; w++)
   {
     for (h = 0; h < height; h++)
