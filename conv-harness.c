@@ -458,6 +458,11 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
   float value;
   int OpenMP_flag = 0;
 
+  /* the threshold to use OpenMP,
+     if the inputs width * nchannels * nkernels * kernel_order
+     are greater than 270 * 270 * 32 * 64 * 3,
+     then the program will use OpenMp to speed up and let OpenMP_flag = 1. 
+     this threshold is gained from multiple different inputs tests, so this threshold may be not very accurate. */
   long long check = width * nchannels * nkernels * kernel_order;
   long long threshold = 270 * 32 * 64 * 3;
 
@@ -466,18 +471,37 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
     OpenMP_flag = 1;
   }
 
+  /*
+    ______________
+    |          | |
+    |     1    | |
+    |          |2|
+    |__________| |
+    |_____3____|_|
+  
+    The output matrix in initialization and convolution parts is divided to 3 parts.
+    Part 1 size is (height - height%4) * (width - width%4), so both part 1's height and width can be exactly divided by 4.
+    Part 2 size is height * (width%4).
+    Part 3 size is (height%4) * (width - width%4).
+    If image's height and width can be exactly divided by 4, then part 2 and 3 won't exist.
+    The loop unrolling and SSE are used in part 1 to speed up.
+    Because of small values of height and width in part 2 and 3, I haven't use SSE to speed up these part.
+  */
+
   // initialize the output matrix to zero
-  // consider openMP???
   float init = 0.0;
   __m128 initValue = _mm_set1_ps(init);
-  // Using
   for (m = 0; m < nkernels; m++)
   {
+    // Using loop unrolling to speedup and assign four rows in one iteration.
     for (h = 0; h < height - height % 4; h += 4)
     {
+      // Using SSE to speedup and assign four colums each time.
       for (w = 0; w < width - width % 4; w += 4)
       {
         // output[i][j][k] = 0.0;
+        // Using SSE will assign four colums each time, so four elements in output will be initialized to 0.
+        // And because of loop unrolling, four rows will be operated in one interation. 
         _mm_storeu_ps(&output[m][h][w], initValue);
         _mm_storeu_ps(&output[m][h + 1][w], initValue);
         _mm_storeu_ps(&output[m][h + 2][w], initValue);
@@ -486,6 +510,9 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
     }
   }
 
+  // Handle the rest parts.
+  // I put m (nkernels) as the innermost loop to avoid unnecessary for loop when the width or height is exactly divided by 4.
+  // Handle part 2
   for (h = height - height % 4; h < height; h++)
   {
     for (w = 0; w < width; w++)
@@ -496,8 +523,8 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
       }
     }
   }
-
-  for (h = height - height % 4; h < height; h++)
+  // Handle part 3
+  for (h = 0; h < height - height % 4 && (width % 4 != 0); h++)
   {
     for (w = width - width % 4; w < width; w++)
     {
@@ -508,25 +535,27 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
     }
   }
 
+
 // now compute multichannel, multikernel convolution
 
-// First handle the part that both the length and width exactly divisible by 4.
-// Using OpenMP to speedup.
-#pragma omp parallel for if(OpenMP_flag) private(w, h, m, x, y) shared(kernels, image, output)
-  // Changed m to the outest loop
+// First handle the part 1 that both the length and width exactly divisible by 4.
+// If input dataset reached threshold then OpenMP_flag = 1 and program will use OpenMP to speedup.
+#pragma omp parallel for if (OpenMP_flag) private(w, h, m, x, y) shared(kernels, image, output)
+  // I got some ideas when I read multichannel_conv_dense(), so I put m’s for loop as the outermost loop in convolution part. 
+  // In this order, I can implement the SSE on h (height).
   for (m = 0; m < nkernels; m++)
   {
-    // Using loop unrolling to speedup.
+    // Using loop unrolling to speedup and calculate four colums in one iteration.
     for (w = 0; w < width - width % 4; w += 4)
     {
-      // Using SSE to speedup.
+      // Using SSE to speedup and calculate four rows each time.
       for (h = 0; h < height - height % 4; h += 4)
       {
+        // double sum = 0.0;
         __m128 sum1 = _mm_setzero_ps();
         __m128 sum2 = _mm_setzero_ps();
         __m128 sum3 = _mm_setzero_ps();
         __m128 sum4 = _mm_setzero_ps();
-        // double sum = 0.0;
         for (x = 0; x < kernel_order; x++)
         {
           for (y = 0; y < kernel_order; y++)
@@ -537,10 +566,13 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
               int this_c = kernel->channel_numbers[index];
               assert((this_c >= 0) && (this_c < nchannels));
 
-              //value = kernel->values[index];
+              // value = kernel->values[index];
+              // Load four copies of value.
               __m128 value = _mm_set1_ps(kernel->values[index]);
 
-              //output[m][h][w] += image[w + x][h + y][this_c] * value;
+              // output[m][h][w] += image[w + x][h + y][this_c] * value;
+              // Load four elements in height and calculate four multiplication at same time.
+              // Becasue of the loop unrolling, four elements in width will be assigned in one iteration.
               __m128 value1 = _mm_setr_ps(image[w + x][h + y][this_c], image[w + x][h + y + 1][this_c], image[w + x][h + y + 2][this_c], image[w + x][h + y + 3][this_c]);
               value1 = _mm_mul_ps(value1, value);
 
@@ -553,6 +585,7 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
               __m128 value4 = _mm_setr_ps(image[w + x + 3][h + y][this_c], image[w + x + 3][h + y + 1][this_c], image[w + x + 3][h + y + 2][this_c], image[w + x + 3][h + y + 3][this_c]);
               value4 = _mm_mul_ps(value4, value);
 
+              // Four additions each time and four loop unrolling in one iteration.
               sum1 = _mm_add_ps(sum1, value1);
               sum2 = _mm_add_ps(sum2, value2);
               sum3 = _mm_add_ps(sum3, value3);
@@ -560,6 +593,8 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
             }
           } // y
         }   // x
+
+        // Load to result sum to output
         float sum[4];
         _mm_storeu_ps(sum, sum1);
         output[m][h][w] = sum[0];
@@ -588,7 +623,7 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
     }   // w
   }     // m
 
-  // Then handle the part that leaves in right.
+  // Then handle the part 2 that leaves in right.
   for (w = width - width % 4; w < width; w++)
   {
     for (h = 0; h < height; h++)
@@ -613,8 +648,8 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
     }       // h
   }         // w
 
-  // Then handle the part that leaves in bottom.
-  for (w = 0; w < width - width % 4; w++)
+  // Then handle the part 3 that leaves in bottom.
+  for (w = 0; w < width - width % 4 && (height % 4 != 0); w++)
   {
     for (h = height - height % 4; h < height; h++)
     {

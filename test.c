@@ -503,19 +503,19 @@ void team_conv_sparse(float *** image, struct sparse_matrix *** kernels,
   long long useNumberUpper = 340*340*32*32*3*3;
   //The lower bound
   long long useNumberLower = 232*232*32*32*3*3;
-  //If it larger than the upper bound than just use it.
-//   if(useNumber >= useNumberUpper){
-//     useOpenMP = 1;
-//   }
-//   //If it larger than the lower bound, then determine if OpenMP should be used
-//   else if(useNumber >= useNumberLower){
-//     long long useNumberMid = (long long)(288*288*32*32*3*3 / log(500.0));
-//     useNumber = useNumber / (int)(log((double)nz));
-//     //If the calculated value larger than the average value then use OpenMP
-//     if(useNumber > useNumberMid){
-//       useOpenMP = 1;
-//     }
-//   }
+  // If it larger than the upper bound than just use it.
+  if(useNumber >= useNumberUpper){
+    useOpenMP = 1;
+  }
+  //If it larger than the lower bound, then determine if OpenMP should be used
+  else if(useNumber >= useNumberLower){
+    long long useNumberMid = (long long)(288*288*32*32*3*3 / log(500.0));
+    useNumber = useNumber / (int)(log((double)nz));
+    //If the calculated value larger than the average value then use OpenMP
+    if(useNumber > useNumberMid){
+      useOpenMP = 1;
+    }
+  }
 
   // initialize the output matrix to zero
 
