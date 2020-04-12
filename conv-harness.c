@@ -460,7 +460,7 @@ void team_conv_sparse(float ***image, struct sparse_matrix ***kernels,
 
   /* the threshold to use OpenMP,
      if the inputs width * nchannels * nkernels * kernel_order
-     are greater than 270 * 270 * 32 * 64 * 3,
+     are greater than 270 * 32 * 64 * 3,
      then the program will use OpenMp to speed up and let OpenMP_flag = 1. 
      this threshold is gained from multiple different inputs tests, so this threshold may be not very accurate. */
   long long check = width * nchannels * nkernels * kernel_order;
